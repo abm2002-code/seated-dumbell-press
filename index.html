@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seated Dumbbell Press Pose Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; }
+        video, canvas { position: absolute; left: 50%; transform: translateX(-50%); top: 10%; }
+        #warning { position: absolute; top: 5%; left: 50%; transform: translateX(-50%); color: red; font-size: 24px; font-weight: bold; }
+        #debug { position: absolute; top: 80%; left: 10%; color: white; font-size: 14px; text-align: left; }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div id="warning"></div>
+    <div id="debug"></div>
+    <audio id="unevenArmsAudio" src="uneven_arms.mp3" preload="auto"></audio>
+    <audio id="shortRomAudio" src="short_rom.mp3" preload="auto"></audio>
+    
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const warningText = document.getElementById('warning');
+        const debugText = document.getElementById('debug');
+        const unevenArmsAudio = document.getElementById('unevenArmsAudio');
+        const shortRomAudio = document.getElementById('shortRomAudio');
+        
+        // Tracking variables for hand height (for uneven arms)
+        let rightHandYPositions = [];
+        let leftHandYPositions = [];
+        let rightHandLowest = Infinity;
+        let leftHandLowest = Infinity;
+
+        // Global flags for short ROM rep detection per arm
+        let leftLowReached = false;
+        let rightLowReached = false;
+        let checkedL = false;
+        let checkedR = false;
+
+        // Parameters for detection
+        const frameWindow = 25;
+        const movementThreshold = 0.07;  // Allowed height difference for uneven arms
+        
+        const pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            };
+        });
+
+        function movingAverage(data, windowSize = 5) {
+            if (data.length < windowSize) {
+                return data.length ? data.reduce((a, b) => a + b, 0) / data.length : 0;
+            }
+            const window = data.slice(-windowSize);
+            return window.reduce((a, b) => a + b, 0) / windowSize;
+        }
+
+        function calculateAngle(a, b, c) {
+            const ba = { x: a.x - b.x, y: a.y - b.y };
+            const bc = { x: c.x - b.x, y: c.y - b.y };
+            const dotProduct = ba.x * bc.x + ba.y * bc.y;
+            const magnitudeBA = Math.sqrt(ba.x ** 2 + ba.y ** 2);
+            const magnitudeBC = Math.sqrt(bc.x ** 2 + bc.y ** 2);
+            const angle = Math.acos(dotProduct / (magnitudeBA * magnitudeBC)) * (180 / Math.PI);
+            return angle;
+        }
+
+        // Function to play audio only if not already playing
+        function playAudio(audioElement) {
+            if (audioElement.paused) {
+                audioElement.play();
+            }
+        }
+
+        pose.onResults(results => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            let feedback = "Good Form";
+            let debugInfo = "";
+
+            if (results.poseLandmarks) {
+                drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+                drawLandmarks(ctx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+
+                const landmarks = results.poseLandmarks;
+
+                // Get key points for uneven arms and arm angle detection
+                const leftHand = landmarks[15]; // LEFT_WRIST
+                const rightHand = landmarks[16]; // RIGHT_WRIST
+                const leftShoulder = landmarks[11]; // LEFT_SHOULDER
+                const rightShoulder = landmarks[12]; // RIGHT_SHOULDER
+                const leftElbow = landmarks[13]; // LEFT_ELBOW
+                const rightElbow = landmarks[14]; // RIGHT_ELBOW
+
+                // Store Y-coordinates for hand tracking
+                const leftHandY = leftHand.y;
+                const rightHandY = rightHand.y;
+
+                leftHandYPositions.push(leftHandY);
+                rightHandYPositions.push(rightHandY);
+
+                if (leftHandYPositions.length > frameWindow) {
+                    leftHandYPositions.shift();
+                }
+                if (rightHandYPositions.length > frameWindow) {
+                    rightHandYPositions.shift();
+                }
+
+                const smoothLeftHandY = movingAverage(leftHandYPositions);
+                const smoothRightHandY = movingAverage(rightHandYPositions);
+
+                leftHandLowest = Math.min(leftHandLowest, smoothLeftHandY);
+                rightHandLowest = Math.min(rightHandLowest, smoothRightHandY);
+
+                // Detect uneven arm pressing (using hand height differences)
+                const handDiff = Math.abs(smoothLeftHandY - smoothRightHandY);
+                const unevenArmDetected = handDiff > movementThreshold;
+
+                // Calculate upper arm angles using a vertical reference (point directly below shoulder)
+                const verticalPointLeft = { x: leftShoulder.x, y: leftShoulder.y + 1 };
+                const leftUpperArmAngle = calculateAngle(
+                    { x: leftElbow.x, y: leftElbow.y },
+                    { x: leftShoulder.x, y: leftShoulder.y },
+                    verticalPointLeft
+                );
+
+                const verticalPointRight = { x: rightShoulder.x, y: rightShoulder.y + 1 };
+                const rightUpperArmAngle = calculateAngle(
+                    { x: rightElbow.x, y: rightElbow.y },
+                    { x: rightShoulder.x, y: rightShoulder.y },
+                    verticalPointRight
+                );
+                
+                if (160 >= leftUpperArmAngle) {
+                    checkedL = false;
+                }
+                if (160 >= rightUpperArmAngle) {
+                    checkedR = false;
+                }
+
+                // Short ROM Logic:
+                if (60 <= leftUpperArmAngle && leftUpperArmAngle <= 90) {
+                    leftLowReached = true;
+                }
+                if (60 <= rightUpperArmAngle && rightUpperArmAngle <= 90) {
+                    rightLowReached = true;
+                }
+
+                let shortRange = false;
+                if (160 <= leftUpperArmAngle && leftUpperArmAngle <= 180) {
+                    if (!checkedL) {
+                        if (!leftLowReached) {
+                            shortRange = true;
+                            playAudio(shortRomAudio);
+                        } else {
+                            leftLowReached = false;  // Reset flag for next rep
+                            checkedL = true;
+                        }
+                    }
+                }
+                
+                if (160 <= rightUpperArmAngle && rightUpperArmAngle <= 180) {
+                    if (!checkedR) {
+                        if (!rightLowReached) {
+                            shortRange = true;
+                            playAudio(shortRomAudio);
+                        } else {
+                            rightLowReached = false;  // Reset flag for next rep
+                            checkedR = true;
+                        }
+                    }
+                }
+
+                // Determine feedback and play audio immediately when mistake is detected
+                if (unevenArmDetected) {
+                    feedback = "Fix Uneven Arm Press!";
+                    playAudio(unevenArmsAudio);
+                } else if (shortRange) {
+                    feedback = "Use Full Range of Motion!";
+                }
+
+                // Display angles on screen
+                ctx.fillStyle = "white";
+                ctx.font = "18px Arial";
+                ctx.fillText(`Left Arm Angle: ${Math.round(leftUpperArmAngle)}°`, 50, 50);
+                ctx.fillText(`Right Arm Angle: ${Math.round(rightUpperArmAngle)}°`, 400, 50);
+                
+                // Debug information
+                debugInfo = `L ROM Angle: ${Math.round(leftUpperArmAngle)}\n` +
+                            `R ROM Angle: ${Math.round(rightUpperArmAngle)}\n` +
+                            `Short Range: ${shortRange}\n` +
+                            `Right Low Reached: ${rightLowReached}\n` +
+                            `Left Low Reached: ${leftLowReached}`;
+            }
+            
+            // Update warning text
+            warningText.innerText = feedback !== "Good Form" ? feedback : "";
+            
+            // Update debug text
+            debugText.innerText = debugInfo;
+        });
+
+        const camera = new Camera(video, {
+            onFrame: async () => { await pose.send({ image: video }); },
+            width: 640,
+            height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>
