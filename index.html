@@ -7,217 +7,521 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-    <style>
-        body { text-align: center; font-family: Arial, sans-serif; }
-        video, canvas { position: absolute; left: 50%; transform: translateX(-50%); top: 10%; }
-        #warning { position: absolute; top: 5%; left: 50%; transform: translateX(-50%); color: red; font-size: 24px; font-weight: bold; }
-        #debug { position: absolute; top: 80%; left: 10%; color: white; font-size: 14px; text-align: left; }
-    </style>
+    <!-- Reference to GitHub-hosted stylesheet via jsDelivr CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/abm2002-code/fitflex-styles@main/styles.css">
 </head>
 <body>
-    <video id="video" autoplay playsinline></video>
-    <canvas id="canvas"></canvas>
-    <div id="warning"></div>
-    <div id="debug"></div>
-    <audio id="unevenArmsAudio" src="uneven_arms.mp3" preload="auto"></audio>
-    <audio id="shortRomAudio" src="short_rom.mp3" preload="auto"></audio>
+  <div class="container">
+    <div class="app-header">
+      <h1 class="app-title">FITFLEX</h1>
+      <p class="app-subtitle">Seated Dumbbell Press Detection</p>
+    </div>
     
-    <script>
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const warningText = document.getElementById('warning');
-        const debugText = document.getElementById('debug');
-        const unevenArmsAudio = document.getElementById('unevenArmsAudio');
-        const shortRomAudio = document.getElementById('shortRomAudio');
-        
-        // Tracking variables for hand height (for uneven arms)
-        let rightHandYPositions = [];
-        let leftHandYPositions = [];
-        let rightHandLowest = Infinity;
-        let leftHandLowest = Infinity;
+    <div class="video-container">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas"></canvas>
+      <div id="warning"></div>
+      <div id="debug"></div>
+      <div class="angle-display">
+        Arm Angle: <span id="arm-angle" class="angle-value">0°</span>
+      </div>
+      <div class="voice-indicator">
+        <div class="voice-dot"></div>
+        Voice Control Active
+      </div>
+      <div class="voice-commands-help">
+        <div class="voice-help-toggle">Voice Commands Help</div>
+        <div class="voice-commands-list">
+          <div class="voice-command-item">
+            <span class="command">Start / Begin / Go</span>
+            <span class="action">Start workout</span>
+          </div>
+          <div class="voice-command-item">
+            <span class="command">Stop / End / Finish</span>
+            <span class="action">Stop workout</span>
+          </div>
+          <div class="voice-command-item">
+            <span class="command">Reset / Restart</span>
+            <span class="action">Reset workout</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="controls">
+      <div class="timer" id="exercise-time">00:00</div>
+      <button id="start-button" class="button start">Start Workout</button>
+      <button id="stop-button" class="button stop hidden">End Workout</button>
+      <button id="reset-button" class="button reset hidden">Reset</button>
+    </div>
+    
+    <div id="results">
+      <h2 class="results-title">Workout Complete</h2>
+      <div class="stats-container">
+        <div class="stat-row">
+          <span class="stat-label">Total Time:</span>
+          <span id="total-time" class="stat-value">00:00</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Total Reps:</span>
+          <span id="rep-count" class="stat-value">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Mistakes:</span>
+          <span id="mistake-count" class="stat-value">0</span>
+        </div>
+      </div>
+      <button id="close-results" class="button close">Close</button>
+    </div>
+    
+    <div id="voice-toast" class="voice-command-toast">Command recognized</div>
+  </div>
+  
+  <audio id="unevenArmsAudio" src="uneven_arms.mp3" preload="auto"></audio>
+  <audio id="shortRomAudio" src="short_rom.mp3" preload="auto"></audio>
+    
+  <script>
+    // DOM Elements
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const warningText = document.getElementById('warning');
+    const debugText = document.getElementById('debug');
+    const armAngleElement = document.getElementById('arm-angle');
+    const unevenArmsAudio = document.getElementById('unevenArmsAudio');
+    const shortRomAudio = document.getElementById('shortRomAudio');
+    const exerciseTimeElement = document.getElementById('exercise-time');
+    const totalTimeElement = document.getElementById('total-time');
+    const repCountElement = document.getElementById('rep-count');
+    const mistakeCountElement = document.getElementById('mistake-count');
+    const startButton = document.getElementById('start-button');
+    const stopButton = document.getElementById('stop-button');
+    const resetButton = document.getElementById('reset-button');
+    const resultsPanel = document.getElementById('results');
+    const closeResultsButton = document.getElementById('close-results');
+    const voiceToast = document.getElementById('voice-toast');
+    
+    // State variables
+    let repCount = 0;
+    let mistakeCount = 0;
+    let isInMistakeState = false;
+    let exerciseStartTime = 0;
+    let exerciseTimer;
+    let isExercising = false;
+    let totalExerciseTime = 0;
+    let recognition = null;
+    
+    // Tracking variables for hand height (for uneven arms)
+    let rightHandYPositions = [];
+    let leftHandYPositions = [];
+    let rightHandLowest = Infinity;
+    let leftHandLowest = Infinity;
 
-        // Global flags for short ROM rep detection per arm
-        let leftLowReached = false;
-        let rightLowReached = false;
-        let checkedL = false;
-        let checkedR = false;
+    // Global flags for short ROM rep detection per arm
+    let leftLowReached = false;
+    let rightLowReached = false;
+    let checkedL = false;
+    let checkedR = false;
 
-        // Parameters for detection
-        const frameWindow = 25;
-        const movementThreshold = 0.07;  // Allowed height difference for uneven arms
-        
-        const pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
-        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    // Parameters for detection
+    const frameWindow = 25;
+    const movementThreshold = 0.07;  // Allowed height difference for uneven arms
+    
+    const pose = new Pose({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}` });
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
-        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-            video.srcObject = stream;
-            video.onloadedmetadata = () => {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-            };
-        });
+    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+        };
+    });
 
-        function movingAverage(data, windowSize = 5) {
-            if (data.length < windowSize) {
-                return data.length ? data.reduce((a, b) => a + b, 0) / data.length : 0;
+    // Button event listeners
+    startButton.addEventListener('click', startExercise);
+    stopButton.addEventListener('click', stopExercise);
+    resetButton.addEventListener('click', resetExercise);
+    closeResultsButton.addEventListener('click', closeResults);
+
+    function movingAverage(data, windowSize = 5) {
+        if (data.length < windowSize) {
+            return data.length ? data.reduce((a, b) => a + b, 0) / data.length : 0;
+        }
+        const window = data.slice(-windowSize);
+        return window.reduce((a, b) => a + b, 0) / windowSize;
+    }
+
+    function calculateAngle(a, b, c) {
+        const ba = { x: a.x - b.x, y: a.y - b.y };
+        const bc = { x: c.x - b.x, y: c.y - b.y };
+        const dotProduct = ba.x * bc.x + ba.y * bc.y;
+        const magnitudeBA = Math.sqrt(ba.x ** 2 + ba.y ** 2);
+        const magnitudeBC = Math.sqrt(bc.x ** 2 + bc.y ** 2);
+        const angle = Math.acos(dotProduct / (magnitudeBA * magnitudeBC)) * (180 / Math.PI);
+        return angle;
+    }
+
+    // Function to play audio only if not already playing
+    function playAudio(audioElement) {
+        if (audioElement.paused) {
+            audioElement.play();
+        }
+    }
+
+    // Initialize always-active speech recognition
+    function initSpeechRecognition() {
+      if ('webkitSpeechRecognition' in window) {
+        recognition = new webkitSpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+
+        // Voice indicator elements
+        const voiceIndicator = document.querySelector('.voice-indicator');
+        const voiceDot = document.querySelector('.voice-dot');
+
+        recognition.onstart = function() {
+          console.log('Voice recognition started');
+          voiceIndicator.style.backgroundColor = 'rgba(0, 255, 127, 0.3)';
+          voiceDot.style.animation = 'pulse 2s infinite';
+        };
+
+        recognition.onresult = function(event) {
+          const last = event.results.length - 1;
+          const command = event.results[last][0].transcript.trim().toLowerCase();
+          const confidence = event.results[last][0].confidence;
+          console.log('Voice command:', command, 'Confidence:', confidence);
+
+          // Flash the indicator to show a command was heard
+          voiceIndicator.style.backgroundColor = 'rgba(0, 255, 127, 0.7)';
+          setTimeout(() => {
+            voiceIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+          }, 300);
+
+          // Only process commands with decent confidence
+          if (confidence > 0.3) {
+            // Start command variations
+            if (
+              command.includes('start') ||
+              command.includes('begin') ||
+              command.includes('go') ||
+              command.includes('start workout')
+            ) {
+              if (!isExercising && !resetButton.classList.contains('hidden')) {
+                resetExercise();
+                setTimeout(() => startExercise(), 500);
+              } else if (!isExercising) {
+                startExercise();
+              }
+              showVoiceToast('Starting workout');
             }
-            const window = data.slice(-windowSize);
-            return window.reduce((a, b) => a + b, 0) / windowSize;
-        }
-
-        function calculateAngle(a, b, c) {
-            const ba = { x: a.x - b.x, y: a.y - b.y };
-            const bc = { x: c.x - b.x, y: c.y - b.y };
-            const dotProduct = ba.x * bc.x + ba.y * bc.y;
-            const magnitudeBA = Math.sqrt(ba.x ** 2 + ba.y ** 2);
-            const magnitudeBC = Math.sqrt(bc.x ** 2 + bc.y ** 2);
-            const angle = Math.acos(dotProduct / (magnitudeBA * magnitudeBC)) * (180 / Math.PI);
-            return angle;
-        }
-
-        // Function to play audio only if not already playing
-        function playAudio(audioElement) {
-            if (audioElement.paused) {
-                audioElement.play();
+            // Stop command variations
+            else if (
+              command.includes('stop') ||
+              command.includes('end') ||
+              command.includes('finish') ||
+              command.includes('stop workout') ||
+              command.includes('end workout')
+            ) {
+              if (isExercising) {
+                stopExercise();
+                showVoiceToast('Stopping workout');
+              }
             }
+            // Reset command variations
+            else if (
+              command.includes('reset') ||
+              command.includes('restart') ||
+              command.includes('start over') ||
+              command.includes('clear')
+            ) {
+              if (!startButton.classList.contains('hidden')) {
+                resetExercise();
+                showVoiceToast('Resetting workout');
+              }
+            }
+          }
+        };
+
+        recognition.onerror = function(event) {
+          console.log('Error occurred in recognition: ' + event.error);
+          // Visual indication of error
+          voiceIndicator.style.backgroundColor = 'rgba(255, 59, 48, 0.3)';
+          setTimeout(() => {
+            voiceIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+          }, 1000);
+
+          // Restart recognition after error
+          setTimeout(() => {
+            try {
+              recognition.start();
+            } catch (e) {
+              console.log('Could not restart speech recognition after error');
+            }
+          }, 1000);
+        };
+
+        recognition.onend = function() {
+          console.log('Voice recognition ended');
+          // Visual indication speech recognition ended
+          voiceDot.style.animation = 'none';
+          // Restart recognition to keep it continuous
+          setTimeout(() => {
+            try {
+              recognition.start();
+            } catch (e) {
+              console.log('Could not restart speech recognition');
+            }
+          }, 500);
+        };
+
+        // Start recognition automatically
+        try {
+          recognition.start();
+        } catch (e) {
+          console.log('Could not start speech recognition', e);
+          voiceIndicator.style.display = 'none';
         }
+      } else {
+        console.log('Speech Recognition not supported');
+        document.querySelector('.voice-indicator').style.display = 'none';
+      }
+    }
 
-        pose.onResults(results => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Toast notification for voice commands
+    function showVoiceToast(message) {
+      voiceToast.textContent = message;
+      voiceToast.classList.add('show');
+      if (voiceToast.timeoutId) {
+        clearTimeout(voiceToast.timeoutId);
+      }
+      voiceToast.timeoutId = setTimeout(() => {
+        voiceToast.classList.remove('show');
+      }, 2000);
+    }
 
-            let feedback = "Good Form";
-            let debugInfo = "";
+    function startExercise() {
+      isExercising = true;
+      repCount = 0;
+      mistakeCount = 0;
+      isInMistakeState = false;
+      
+      // Reset ROM tracking
+      leftLowReached = false;
+      rightLowReached = false;
+      checkedL = false;
+      checkedR = false;
+      
+      // Update UI
+      startButton.classList.add('hidden');
+      stopButton.classList.remove('hidden');
+      resetButton.classList.add('hidden');
+      
+      // Start timer
+      exerciseStartTime = Date.now();
+      exerciseTimer = setInterval(updateExerciseTime, 1000);
+      showVoiceToast('Workout started');
+    }
 
-            if (results.poseLandmarks) {
-                drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
-                drawLandmarks(ctx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+    function stopExercise() {
+      isExercising = false;
+      clearInterval(exerciseTimer);
+      
+      // Calculate total time in seconds
+      totalExerciseTime = Math.floor((Date.now() - exerciseStartTime) / 1000);
+      
+      // Update UI
+      stopButton.classList.add('hidden');
+      resetButton.classList.remove('hidden');
+      
+      // Show results
+      displayResults();
+    }
 
-                const landmarks = results.poseLandmarks;
+    function resetExercise() {
+      resetButton.classList.add('hidden');
+      startButton.classList.remove('hidden');
+      exerciseTimeElement.textContent = "00:00";
+      warningText.innerText = "";
+    }
 
-                // Get key points for uneven arms and arm angle detection
-                const leftHand = landmarks[15]; // LEFT_WRIST
-                const rightHand = landmarks[16]; // RIGHT_WRIST
-                const leftShoulder = landmarks[11]; // LEFT_SHOULDER
-                const rightShoulder = landmarks[12]; // RIGHT_SHOULDER
-                const leftElbow = landmarks[13]; // LEFT_ELBOW
-                const rightElbow = landmarks[14]; // RIGHT_ELBOW
+    function displayResults() {
+      const minutes = Math.floor(totalExerciseTime / 60);
+      const seconds = totalExerciseTime % 60;
+      totalTimeElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      repCountElement.textContent = repCount;
+      mistakeCountElement.textContent = mistakeCount;
+      resultsPanel.style.display = 'block';
+    }
 
-                // Store Y-coordinates for hand tracking
-                const leftHandY = leftHand.y;
-                const rightHandY = rightHand.y;
+    function closeResults() {
+      resultsPanel.style.display = 'none';
+    }
 
-                leftHandYPositions.push(leftHandY);
-                rightHandYPositions.push(rightHandY);
+    function updateExerciseTime() {
+      const elapsedTime = Math.floor((Date.now() - exerciseStartTime) / 1000);
+      const minutes = Math.floor(elapsedTime / 60);
+      const seconds = elapsedTime % 60;
+      exerciseTimeElement.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
 
-                if (leftHandYPositions.length > frameWindow) {
-                    leftHandYPositions.shift();
-                }
-                if (rightHandYPositions.length > frameWindow) {
-                    rightHandYPositions.shift();
-                }
+    pose.onResults(results => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                const smoothLeftHandY = movingAverage(leftHandYPositions);
-                const smoothRightHandY = movingAverage(rightHandYPositions);
+        let feedback = "Good Form";
+        let debugInfo = "";
 
-                leftHandLowest = Math.min(leftHandLowest, smoothLeftHandY);
-                rightHandLowest = Math.min(rightHandLowest, smoothRightHandY);
+        if (results.poseLandmarks) {
+            // Draw pose landmarks and connections
+            drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF7F', lineWidth: 4 });
+            drawLandmarks(ctx, results.poseLandmarks, { color: '#FFFFFF', lineWidth: 2, radius: 6 });
 
-                // Detect uneven arm pressing (using hand height differences)
-                const handDiff = Math.abs(smoothLeftHandY - smoothRightHandY);
-                const unevenArmDetected = handDiff > movementThreshold;
+            const landmarks = results.poseLandmarks;
 
-                // Calculate upper arm angles using a vertical reference (point directly below shoulder)
-                const verticalPointLeft = { x: leftShoulder.x, y: leftShoulder.y + 1 };
-                const leftUpperArmAngle = calculateAngle(
-                    { x: leftElbow.x, y: leftElbow.y },
-                    { x: leftShoulder.x, y: leftShoulder.y },
-                    verticalPointLeft
-                );
-
-                const verticalPointRight = { x: rightShoulder.x, y: rightShoulder.y + 1 };
-                const rightUpperArmAngle = calculateAngle(
-                    { x: rightElbow.x, y: rightElbow.y },
-                    { x: rightShoulder.x, y: rightShoulder.y },
-                    verticalPointRight
-                );
+                       // Get key points for uneven arms detection
+                       const leftWrist = landmarks[15]; // LEFT_WRIST
+            const rightWrist = landmarks[16]; // RIGHT_WRIST
+            const leftShoulder = landmarks[11]; // LEFT_SHOULDER
+            const rightShoulder = landmarks[12]; // RIGHT_SHOULDER
+            const leftElbow = landmarks[13]; // LEFT_ELBOW
+            const rightElbow = landmarks[14]; // RIGHT_ELBOW
+            
+            // Calculate arm angles
+            const leftArmAngle = calculateAngle(leftShoulder, leftElbow, leftWrist);
+            const rightArmAngle = calculateAngle(rightShoulder, rightElbow, rightWrist);
+            
+            // Update angle display (average of both arms)
+            const avgArmAngle = (leftArmAngle + rightArmAngle) / 2;
+            armAngleElement.textContent = `${Math.round(avgArmAngle)}°`;
+            
+            // Track hand positions for movement detection
+            leftHandYPositions.push(leftWrist.y);
+            rightHandYPositions.push(rightWrist.y);
+            
+            // Keep buffer at reasonable size
+            if (leftHandYPositions.length > frameWindow) {
+                leftHandYPositions.shift();
+                rightHandYPositions.shift();
+            }
+            
+            // Track lowest position for ROM detection
+            if (leftWrist.y < leftHandLowest) leftHandLowest = leftWrist.y;
+            if (rightWrist.y < rightHandLowest) rightHandLowest = rightWrist.y;
+            
+            // Get smoothed positions
+            const leftHandY = movingAverage(leftHandYPositions);
+            const rightHandY = movingAverage(rightHandYPositions);
+            
+            if (isExercising) {
+                // Check for uneven arms (one hand significantly higher than the other)
+                const heightDifference = Math.abs(leftHandY - rightHandY);
                 
-                if (160 >= leftUpperArmAngle) {
+                // Check for ROM issues
+                // Low position reached when hands are near shoulders
+                if (leftArmAngle < 100 && !leftLowReached) {
+                    leftLowReached = true;
                     checkedL = false;
                 }
-                if (160 >= rightUpperArmAngle) {
+                
+                if (rightArmAngle < 100 && !rightLowReached) {
+                    rightLowReached = true;
                     checkedR = false;
                 }
-
-                // Short ROM Logic:
-                if (60 <= leftUpperArmAngle && leftUpperArmAngle <= 90) {
-                    leftLowReached = true;
-                }
-                if (60 <= rightUpperArmAngle && rightUpperArmAngle <= 90) {
-                    rightLowReached = true;
-                }
-
-                let shortRange = false;
-                if (160 <= leftUpperArmAngle && leftUpperArmAngle <= 180) {
-                    if (!checkedL) {
-                        if (!leftLowReached) {
-                            shortRange = true;
-                            playAudio(shortRomAudio);
-                        } else {
-                            leftLowReached = false;  // Reset flag for next rep
-                            checkedL = true;
-                        }
-                    }
+                
+                // Check if full extension is reached
+                if (leftArmAngle > 160 && leftLowReached && !checkedL) {
+                    checkedL = true;
                 }
                 
-                if (160 <= rightUpperArmAngle && rightUpperArmAngle <= 180) {
-                    if (!checkedR) {
-                        if (!rightLowReached) {
-                            shortRange = true;
-                            playAudio(shortRomAudio);
-                        } else {
-                            rightLowReached = false;  // Reset flag for next rep
-                            checkedR = true;
-                        }
-                    }
+                if (rightArmAngle > 160 && rightLowReached && !checkedR) {
+                    checkedR = true;
                 }
-
-                // Determine feedback and play audio immediately when mistake is detected
-                if (unevenArmDetected) {
-                    feedback = "Fix Uneven Arm Press!";
+                
+                // If both arms have completed a rep
+                if (checkedL && checkedR) {
+                    repCount++;
+                    leftLowReached = false;
+                    rightLowReached = false;
+                    checkedL = false;
+                    checkedR = false;
+                }
+                
+                // Check for form issues
+                if (heightDifference > movementThreshold && !isInMistakeState) {
+                    warningText.innerText = "Keep your arms even!";
                     playAudio(unevenArmsAudio);
-                } else if (shortRange) {
-                    feedback = "Use Full Range of Motion!";
+                    mistakeCount++;
+                    isInMistakeState = true;
+                    feedback = "Uneven Arms";
+                } 
+                // Check if one arm is not fully extending
+                else if ((leftArmAngle < 150 && rightArmAngle > 160) || 
+                         (rightArmAngle < 150 && leftArmAngle > 160)) {
+                    if (!isInMistakeState) {
+                        warningText.innerText = "Extend both arms fully!";
+                        playAudio(shortRomAudio);
+                        mistakeCount++;
+                        isInMistakeState = true;
+                        feedback = "Incomplete Extension";
+                    }
                 }
-
-                // Display angles on screen
-                ctx.fillStyle = "white";
-                ctx.font = "18px Arial";
-                ctx.fillText(`Left Arm Angle: ${Math.round(leftUpperArmAngle)}°`, 50, 50);
-                ctx.fillText(`Right Arm Angle: ${Math.round(rightUpperArmAngle)}°`, 400, 50);
-                
-                // Debug information
-                debugInfo = `L ROM Angle: ${Math.round(leftUpperArmAngle)}\n` +
-                            `R ROM Angle: ${Math.round(rightUpperArmAngle)}\n` +
-                            `Short Range: ${shortRange}\n` +
-                            `Right Low Reached: ${rightLowReached}\n` +
-                            `Left Low Reached: ${leftLowReached}`;
+                // Reset mistake state if form is corrected
+                else if (heightDifference <= movementThreshold && 
+                        (leftArmAngle <= 160 || rightArmAngle <= 160 || 
+                         Math.abs(leftArmAngle - rightArmAngle) < 15) && 
+                        isInMistakeState) {
+                    isInMistakeState = false;
+                    warningText.innerText = "";
+                }
             }
             
-            // Update warning text
-            warningText.innerText = feedback !== "Good Form" ? feedback : "";
+            // Debug information
+            debugInfo = `
+                Left Arm: ${Math.round(leftArmAngle)}°<br>
+                Right Arm: ${Math.round(rightArmAngle)}°<br>
+                Height Diff: ${(Math.abs(leftHandY - rightHandY) * 100).toFixed(2)}%<br>
+                Reps: ${repCount}<br>
+                Mistakes: ${mistakeCount}
+            `;
             
-            // Update debug text
-            debugText.innerText = debugInfo;
-        });
+            debugText.innerHTML = debugInfo;
+        }
+    });
 
-        const camera = new Camera(video, {
-            onFrame: async () => { await pose.send({ image: video }); },
-            width: 640,
-            height: 480
-        });
-        camera.start();
-    </script>
+    const camera = new Camera(video, {
+        onFrame: async () => { await pose.send({ image: video }); },
+        width: 640,
+        height: 480
+    });
+    camera.start();
+    
+    // Handle window resize for responsiveness
+    window.addEventListener('resize', () => {
+        if (video.videoWidth > 0) {
+            const containerWidth = document.querySelector('.video-container').clientWidth;
+            const scale = containerWidth / video.videoWidth;
+            // Maintain aspect ratio
+            canvas.style.width = '100%';
+            canvas.style.height = 'auto';
+        }
+    });
+    
+    // Initialize speech recognition when DOM is loaded
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(() => {
+        initSpeechRecognition();
+      }, 1000);
+    });
+    
+    // Set up voice help toggle
+    const voiceHelpToggle = document.querySelector('.voice-help-toggle');
+    const voiceCommandsList = document.querySelector('.voice-commands-list');
+    
+    voiceHelpToggle.addEventListener('click', () => {
+        voiceCommandsList.classList.toggle('show');
+    });
+  </script>
 </body>
 </html>
