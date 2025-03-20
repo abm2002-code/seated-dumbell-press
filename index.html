@@ -457,16 +457,16 @@
                     feedback = "Uneven Arms";
                 } 
                 // Check if one arm is not fully extending
-                else if ((leftArmAngle < 150 && rightArmAngle > 160) || 
-                         (rightArmAngle < 150 && leftArmAngle > 160)) {
-                    if (!isInMistakeState) {
-                        warningText.innerText = "Extend both arms fully!";
-                        playAudio(shortRomAudio);
-                        mistakeCount++;
-                        isInMistakeState = true;
-                        feedback = "Incomplete Extension";
-                    }
-                }
+                // else if ((leftArmAngle < 150 && rightArmAngle > 160) || 
+                //          (rightArmAngle < 150 && leftArmAngle > 160)) {
+                //     if (!isInMistakeState) {
+                //         warningText.innerText = "Extend both arms fully!";
+                //         playAudio(shortRomAudio);
+                //         mistakeCount++;
+                //         isInMistakeState = true;
+                //         feedback = "Incomplete Extension";
+                //     }
+                // }
                 // Reset mistake state if form is corrected
                 else if (heightDifference <= movementThreshold && 
                         (leftArmAngle <= 160 || rightArmAngle <= 160 || 
