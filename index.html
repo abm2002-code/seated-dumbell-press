@@ -8,12 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <!-- Reference to GitHub-hosted stylesheet via jsDelivr CDN -->
-    <link rel="styles        const workoutData = {
-          type: 'workoutCompleted',
-          exerciseType: 'seated_dumbbell_press',
-          duration: totalExerciseTime,
-          totalMistakes: mistakeCount
-        };https://cdn.jsdelivr.net/gh/abm2002-code/fitflex-styles@main/styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/abm2002-code/fitflex-styles@main/styles.css">
 </head>
 <body>
   <div class="container">
@@ -28,7 +23,7 @@
       <div id="warning"></div>
       <div id="debug"></div>
       <div class="angle-display">
-        Arm Angle: <span id="arm-angle" class="angle-value">0Â°</span>
+        Arm Angle: <span id="arm-angle" class="angle-value">0°</span>
       </div>
       <div class="voice-indicator">
         <div class="voice-dot"></div>
@@ -350,7 +345,7 @@
       resetButton.classList.remove('hidden');
       
       // Show results
-      displayResults();    // Send detailed workout data to React Native app`n      sendWorkoutDataToApp();
+      displayResults();
     }
 
     function resetExercise() {
@@ -408,7 +403,7 @@
             
             // Update angle display (average of both arms)
             const avgArmAngle = (leftArmAngle + rightArmAngle) / 2;
-            armAngleElement.textContent = `${Math.round(avgArmAngle)}Â°`;
+            armAngleElement.textContent = `${Math.round(avgArmAngle)}°`;
             
             // Track hand positions for movement detection
             leftHandYPositions.push(leftWrist.y);
@@ -493,8 +488,8 @@
             
             // Debug information
             debugInfo = `
-                Left Arm: ${Math.round(leftArmAngle)}Â°<br>
-                Right Arm: ${Math.round(rightArmAngle)}Â°<br>
+                Left Arm: ${Math.round(leftArmAngle)}°<br>
+                Right Arm: ${Math.round(rightArmAngle)}°<br>
                 Height Diff: ${(Math.abs(leftHandY - rightHandY) * 100).toFixed(2)}%<br>
                 Reps: ${repCount}<br>
                 Mistakes: ${mistakeCount}
@@ -528,40 +523,6 @@
         initSpeechRecognition();
       }, 1000);
     });
-    // Function to send detailed workout data to React Native app
-    
-    // Function to send detailed workout data to React Native app
-    function sendWorkoutDataToApp() {
-      try {
-        const workoutData = {
-          type: 'workoutCompleted',
-          exerciseType: 'seated_dumbbell_press',
-          duration: totalExerciseTime,
-          totalMistakes: mistakeCount
-        };
-        
-        // Send data via postMessage (for React Native WebView)
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify(workoutData));
-        }
-        
-        // Also send via console.log for the injected JavaScript to catch
-        console.log('Workout completed:', JSON.stringify(workoutData));
-        
-      } catch (error) {
-        console.error('Error sending workout data:', error);
-        // Fallback - just send basic completion signal
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'workoutCompleted',
-            exerciseType: 'seated_dumbbell_press',
-            duration: totalExerciseTime,
-            totalMistakes: mistakeCount
-          }));
-        }
-      }
-    }
-
     
     // Set up voice help toggle
     const voiceHelpToggle = document.querySelector('.voice-help-toggle');
